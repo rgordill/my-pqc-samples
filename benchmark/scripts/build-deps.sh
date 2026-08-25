@@ -11,6 +11,7 @@ OPENSSL4_VERSION="openssl-4.0.1"
 OPENSSL3_VERSION="openssl-3.6.3"
 BORINGSSL_VERSION="0.20260803.0"
 AWSLC_VERSION="v5.5.0"
+LEANCRYPTO_VERSION="v1.8.0"
 GNUTLS_VERSION="3.8.13"
 
 mkdir -p "${THIRD_PARTY}" "${INSTALL_DIR}"
@@ -34,6 +35,13 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
     echo "Install them with:"
     echo "  sudo dnf install nettle-devel gmp-devel libtasn1-devel libunistring-devel"
     exit 1
+fi
+
+# --- Pre-flight: check meson/ninja for leancrypto ---
+if ! command -v meson &>/dev/null || ! command -v ninja &>/dev/null; then
+    echo "WARNING: meson/ninja not found. Required for leancrypto build."
+    echo "Install with: pip install --user meson ninja"
+    echo ""
 fi
 
 # --- OpenSSL 4.0.1 ---
@@ -74,7 +82,30 @@ else
     echo "OpenSSL 3.x installed to ${OPENSSL3_INSTALL}"
 fi
 
-# --- GnuTLS 3.8.13 ---
+# --- leancrypto 1.8.0 (PQC backend for GnuTLS) ---
+LEANCRYPTO_DIR="${THIRD_PARTY}/leancrypto"
+LEANCRYPTO_INSTALL="${INSTALL_DIR}/leancrypto"
+
+if [ -f "${LEANCRYPTO_INSTALL}/lib64/libleancrypto.so" ] || [ -f "${LEANCRYPTO_INSTALL}/lib/libleancrypto.so" ]; then
+    echo "leancrypto already built, skipping."
+else
+    echo "=== Building leancrypto ${LEANCRYPTO_VERSION} ==="
+    if ! command -v meson &>/dev/null; then
+        echo "ERROR: meson is required to build leancrypto. Install with: pip install --user meson ninja"
+        exit 1
+    fi
+    if [ ! -d "${LEANCRYPTO_DIR}" ]; then
+        git clone --branch "${LEANCRYPTO_VERSION}" --depth 1 \
+            https://github.com/smuellerDD/leancrypto.git "${LEANCRYPTO_DIR}"
+    fi
+    cd "${LEANCRYPTO_DIR}"
+    meson setup builddir --prefix="${LEANCRYPTO_INSTALL}" --default-library=shared -Dbuildtype=release
+    meson compile -C builddir
+    meson install -C builddir
+    echo "leancrypto installed to ${LEANCRYPTO_INSTALL}"
+fi
+
+# --- GnuTLS 3.8.13 (with leancrypto for PQC) ---
 GNUTLS_TARBALL="gnutls-${GNUTLS_VERSION}.tar.xz"
 GNUTLS_SRC_DIR="${THIRD_PARTY}/gnutls-${GNUTLS_VERSION}"
 GNUTLS_INSTALL="${INSTALL_DIR}/gnutls"
@@ -82,7 +113,7 @@ GNUTLS_INSTALL="${INSTALL_DIR}/gnutls"
 if [ -f "${GNUTLS_INSTALL}/lib/libgnutls.so" ] || [ -f "${GNUTLS_INSTALL}/lib64/libgnutls.so" ]; then
     echo "GnuTLS already built, skipping."
 else
-    echo "=== Building GnuTLS ${GNUTLS_VERSION} ==="
+    echo "=== Building GnuTLS ${GNUTLS_VERSION} (with --with-leancrypto) ==="
     if [ ! -d "${GNUTLS_SRC_DIR}" ]; then
         cd "${THIRD_PARTY}"
         if [ ! -f "${GNUTLS_TARBALL}" ]; then
@@ -91,10 +122,20 @@ else
         fi
         tar xf "${GNUTLS_TARBALL}"
     fi
+
+    # leancrypto pkg-config path for GnuTLS configure
+    if [ -d "${LEANCRYPTO_INSTALL}/lib64/pkgconfig" ]; then
+        LEANCRYPTO_PKG="${LEANCRYPTO_INSTALL}/lib64/pkgconfig"
+    else
+        LEANCRYPTO_PKG="${LEANCRYPTO_INSTALL}/lib/pkgconfig"
+    fi
+
     cd "${GNUTLS_SRC_DIR}"
+    PKG_CONFIG_PATH="${LEANCRYPTO_PKG}:${PKG_CONFIG_PATH:-}" \
     ./configure --prefix="${GNUTLS_INSTALL}" \
         --disable-doc --disable-tests --disable-tools \
-        --without-p11-kit --enable-shared --disable-static
+        --without-p11-kit --enable-shared --disable-static \
+        --with-leancrypto
     make -j"${NPROC}"
     make install
     echo "GnuTLS installed to ${GNUTLS_INSTALL}"

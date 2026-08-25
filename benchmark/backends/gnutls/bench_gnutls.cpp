@@ -5,8 +5,19 @@
 #include <gnutls/crypto.h>
 
 #include <cstdio>
-#include <cstring>
 #include <vector>
+
+static bool is_supported(bench::Algorithm algo) {
+    switch (algo) {
+        case bench::Algorithm::ML_KEM_768:
+        case bench::Algorithm::ML_DSA_44:
+        case bench::Algorithm::ML_DSA_65:
+        case bench::Algorithm::ML_DSA_87:
+            return true;
+        default:
+            return false;
+    }
+}
 
 static gnutls_pk_algorithm_t gnutls_pk_for_algo(bench::Algorithm algo) {
     switch (algo) {
@@ -17,6 +28,15 @@ static gnutls_pk_algorithm_t gnutls_pk_for_algo(bench::Algorithm algo) {
         case bench::Algorithm::ML_DSA_65:   return GNUTLS_PK_MLDSA65;
         case bench::Algorithm::ML_DSA_87:   return GNUTLS_PK_MLDSA87;
         default:                            return static_cast<gnutls_pk_algorithm_t>(0);
+    }
+}
+
+static gnutls_sign_algorithm_t gnutls_sign_for_algo(bench::Algorithm algo) {
+    switch (algo) {
+        case bench::Algorithm::ML_DSA_44: return GNUTLS_SIGN_MLDSA44;
+        case bench::Algorithm::ML_DSA_65: return GNUTLS_SIGN_MLDSA65;
+        case bench::Algorithm::ML_DSA_87: return GNUTLS_SIGN_MLDSA87;
+        default:                          return GNUTLS_SIGN_UNKNOWN;
     }
 }
 
@@ -82,8 +102,9 @@ static bool setup_thread(int tid) {
 
     if (st.operation == bench::Operation::VERIFY) {
         gnutls_datum_t sig = {nullptr, 0};
-        int ret = gnutls_privkey_sign_data(st.privkey, GNUTLS_DIG_SHA256, 0,
-                                          &st.message, &sig);
+        gnutls_sign_algorithm_t sig_algo = gnutls_sign_for_algo(st.algorithm);
+        int ret = gnutls_privkey_sign_data2(st.privkey, sig_algo, 0,
+                                           &st.message, &sig);
         if (ret < 0) {
             fprintf(stderr, "Thread %d: initial sign failed: %s\n", tid, gnutls_strerror(ret));
             return false;
@@ -107,13 +128,15 @@ static void bench_thread(int tid) {
         }
         case bench::Operation::SIGN: {
             gnutls_datum_t sig = {nullptr, 0};
-            gnutls_privkey_sign_data(st.privkey, GNUTLS_DIG_SHA256, 0,
-                                    &st.message, &sig);
+            gnutls_sign_algorithm_t sig_algo = gnutls_sign_for_algo(st.algorithm);
+            gnutls_privkey_sign_data2(st.privkey, sig_algo, 0,
+                                     &st.message, &sig);
             gnutls_free(sig.data);
             break;
         }
         case bench::Operation::VERIFY: {
-            gnutls_pubkey_verify_data2(st.pubkey, GNUTLS_SIGN_UNKNOWN, 0,
+            gnutls_sign_algorithm_t sig_algo = gnutls_sign_for_algo(st.algorithm);
+            gnutls_pubkey_verify_data2(st.pubkey, sig_algo, 0,
                                       &st.message, &st.signature);
             break;
         }
@@ -135,6 +158,13 @@ int main(int argc, char* argv[]) {
     bench::Config cfg = bench::parse_args(argc, argv);
 
     gnutls_global_init();
+
+    if (!is_supported(cfg.algorithm)) {
+        fprintf(stderr, "ERROR: Algorithm %s not supported by GnuTLS backend\n",
+                bench::algorithm_name(cfg.algorithm));
+        gnutls_global_deinit();
+        return 2;
+    }
 
     bench::LibraryInfo info;
     info.name = "GnuTLS";
