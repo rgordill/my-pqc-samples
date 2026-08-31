@@ -5,10 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG -march=native -fno-omit-frame-pointer")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG -march=native -fno-omit-frame-pointer")
 
 # --- Common library (no crypto deps) ---
 add_library(bench_common STATIC
@@ -142,4 +143,31 @@ if(GNUTLS_LIB_DIR)
     message(STATUS "GnuTLS found at ${GNUTLS_ROOT} - bench_gnutls enabled")
 else()
     message(WARNING "GnuTLS not found at ${GNUTLS_ROOT} - bench_gnutls disabled. Run scripts/build-deps.sh first.")
+endif()
+
+# --- Intel IPP Crypto backend (third_party) ---
+set(IPPCRYPTO_ROOT "${CMAKE_SOURCE_DIR}/third_party/install/ipp-crypto" CACHE PATH "Intel IPP Crypto install prefix")
+set(IPPCRYPTO_VERSION "2.2.0" CACHE STRING "Intel IPP Crypto version")
+
+if(EXISTS "${IPPCRYPTO_ROOT}/lib/intel64/libippcp.so")
+    set(IPPCRYPTO_LIB_DIR "${IPPCRYPTO_ROOT}/lib/intel64")
+elseif(EXISTS "${IPPCRYPTO_ROOT}/lib/libippcp.so")
+    set(IPPCRYPTO_LIB_DIR "${IPPCRYPTO_ROOT}/lib")
+else()
+    set(IPPCRYPTO_LIB_DIR "")
+endif()
+
+if(IPPCRYPTO_LIB_DIR AND EXISTS "${IPPCRYPTO_ROOT}/include/ippcp.h")
+    add_executable(bench_ipp_crypto backends/ipp_crypto/bench_ipp_crypto.cpp)
+    target_include_directories(bench_ipp_crypto PRIVATE "${IPPCRYPTO_ROOT}/include")
+    target_compile_definitions(bench_ipp_crypto PRIVATE BENCH_IPPCRYPTO_VERSION="${IPPCRYPTO_VERSION}")
+    target_link_libraries(bench_ipp_crypto PRIVATE
+        bench_common
+        "${IPPCRYPTO_LIB_DIR}/libippcp.so"
+        pthread
+    )
+    set_target_properties(bench_ipp_crypto PROPERTIES BUILD_RPATH "${IPPCRYPTO_LIB_DIR}")
+    message(STATUS "Intel IPP Crypto found at ${IPPCRYPTO_ROOT} - bench_ipp_crypto enabled")
+else()
+    message(WARNING "Intel IPP Crypto not found at ${IPPCRYPTO_ROOT} - bench_ipp_crypto disabled. Run scripts/build-deps.sh first.")
 endif()

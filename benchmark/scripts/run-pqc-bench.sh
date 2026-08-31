@@ -9,21 +9,27 @@ THIRD_PARTY="${BENCH_DIR}/third_party/install"
 # --- Options ---
 PIN_CPUS=""
 OUTDIR=""
+FILTER_LIBS=""
+FILTER_ALGOS=""
 
 usage() {
     echo "Usage: $0 [OPTIONS] [output_dir]"
     echo ""
     echo "Options:"
-    echo "  --pin-cpus CPUSET   Pin benchmark processes to specific CPUs using taskset."
-    echo "                      CPUSET uses taskset syntax: e.g. '0-3', '0,2,4', '0-7'."
-    echo "                      Useful for isolating benchmarks from OS scheduling noise"
-    echo "                      and avoiding P-core/E-core variance on hybrid CPUs."
-    echo "  -h, --help          Show this help message."
+    echo "  --pin-cpus CPUSET       Pin benchmark processes to specific CPUs using taskset."
+    echo "                          CPUSET uses taskset syntax: e.g. '0-3', '0,2,4', '0-7'."
+    echo "  --libraries LIBS        Comma-separated list of libraries to test."
+    echo "                          Valid names: openssl, openssl3, boringssl, aws_lc, gnutls, ipp_crypto"
+    echo "  --algorithms ALGOS      Comma-separated list of algorithms to test."
+    echo "                          e.g. ML-KEM-768,ML-DSA-65,SLH-DSA-SHA2-128f"
+    echo "  -h, --help              Show this help message."
     echo ""
     echo "Examples:"
-    echo "  $0                              # Run without CPU pinning"
-    echo "  $0 --pin-cpus 0-3              # Pin to CPUs 0-3"
-    echo "  $0 --pin-cpus 0,2,4,6 results/ # Pin to specific cores, output to results/"
+    echo "  $0                                                   # Run all libraries and algorithms"
+    echo "  $0 --libraries openssl,aws_lc                        # Only OpenSSL 4.x and AWS-LC"
+    echo "  $0 --algorithms ML-KEM-768,ML-DSA-65                 # Only these two algorithms"
+    echo "  $0 --libraries ipp_crypto --algorithms ML-KEM-512    # IPP Crypto, ML-KEM-512 only"
+    echo "  $0 --pin-cpus 0-3                                    # Pin to CPUs 0-3"
     exit 0
 }
 
@@ -31,6 +37,14 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --pin-cpus)
             PIN_CPUS="$2"
+            shift 2
+            ;;
+        --libraries)
+            FILTER_LIBS="$2"
+            shift 2
+            ;;
+        --algorithms)
+            FILTER_ALGOS="$2"
             shift 2
             ;;
         -h|--help)
@@ -128,13 +142,35 @@ ALGORITHMS=(ML-KEM-512 ML-KEM-768 ML-KEM-1024 ML-DSA-44 ML-DSA-65 ML-DSA-87
 #   ML-DSA-44/65/87:      keygen, sign, verify
 GNUTLS_ALGORITHMS=(ML-KEM-768 ML-DSA-44 ML-DSA-65 ML-DSA-87)
 
+# Intel IPP Crypto: ML-KEM and ML-DSA only (no SLH-DSA support)
+IPPCRYPTO_ALGORITHMS=(ML-KEM-512 ML-KEM-768 ML-KEM-1024 ML-DSA-44 ML-DSA-65 ML-DSA-87)
+
+# Parse --algorithms filter into an associative set for O(1) lookup
+declare -A ALGOS_FILTER
+if [ -n "${FILTER_ALGOS}" ]; then
+    IFS=',' read -ra _ALGOS <<< "${FILTER_ALGOS}"
+    for _algo in "${_ALGOS[@]}"; do
+        ALGOS_FILTER["${_algo}"]=1
+    done
+fi
+
 algorithms_for() {
     local bin="$1"
+    local candidates=()
     if [[ "${bin}" == bench_gnutls ]]; then
-        printf '%s\n' "${GNUTLS_ALGORITHMS[@]}"
+        candidates=("${GNUTLS_ALGORITHMS[@]}")
+    elif [[ "${bin}" == bench_ipp_crypto ]]; then
+        candidates=("${IPPCRYPTO_ALGORITHMS[@]}")
     else
-        printf '%s\n' "${ALGORITHMS[@]}"
+        candidates=("${ALGORITHMS[@]}")
     fi
+
+    for a in "${candidates[@]}"; do
+        if [ -n "${FILTER_ALGOS}" ] && [ -z "${ALGOS_FILTER[${a}]+_}" ]; then
+            continue
+        fi
+        printf '%s\n' "${a}"
+    done
 }
 
 operations_for() {
@@ -175,15 +211,31 @@ while [ "${T}" -le "${MAX_THREADS}" ]; do
     T=$((T * 2))
 done
 
+# Parse --libraries filter into an associative set for O(1) lookup
+declare -A LIBS_FILTER
+if [ -n "${FILTER_LIBS}" ]; then
+    IFS=',' read -ra _LIBS <<< "${FILTER_LIBS}"
+    for _lib in "${_LIBS[@]}"; do
+        LIBS_FILTER["bench_${_lib}"]=1
+    done
+fi
+
 BINARIES=()
-for bin in bench_openssl bench_openssl3 bench_boringssl bench_aws_lc bench_gnutls; do
+for bin in bench_openssl bench_openssl3 bench_boringssl bench_aws_lc bench_gnutls bench_ipp_crypto; do
     if [ -x "${BUILD_DIR}/${bin}" ]; then
+        if [ -n "${FILTER_LIBS}" ] && [ -z "${LIBS_FILTER[${bin}]+_}" ]; then
+            continue
+        fi
         BINARIES+=("${bin}")
     fi
 done
 
 if [ ${#BINARIES[@]} -eq 0 ]; then
     echo "ERROR: No benchmark binaries found in ${BUILD_DIR}"
+    if [ -n "${FILTER_LIBS}" ]; then
+        echo "  (--libraries filter: ${FILTER_LIBS})"
+        echo "  Valid names: openssl, openssl3, boringssl, aws_lc, gnutls, ipp_crypto"
+    fi
     exit 1
 fi
 
@@ -202,8 +254,14 @@ log "--- Libraries ---"
 for bin in "${BINARIES[@]}"; do
     log "  ${bin} -> ${BIN_LABELS[${bin}]}"
 done
+if [ -n "${FILTER_LIBS}" ]; then
+    log "  (filtered: ${FILTER_LIBS})"
+fi
 log ""
 log "Algorithms:    ${ALGORITHMS[*]}"
+if [ -n "${FILTER_ALGOS}" ]; then
+    log "  (filtered: ${FILTER_ALGOS})"
+fi
 log "Thread counts: ${THREADS[*]} (max=${MAX_THREADS}, host CPUs=${NCPUS})"
 log ""
 

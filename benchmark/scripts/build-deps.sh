@@ -13,8 +13,15 @@ BORINGSSL_VERSION="0.20260803.0"
 AWSLC_VERSION="v5.5.0"
 LEANCRYPTO_VERSION="v1.8.0"
 GNUTLS_VERSION="3.8.13"
+IPPCRYPTO_VERSION="cryptography-primitives_2_2_0"
 
 mkdir -p "${THIRD_PARTY}" "${INSTALL_DIR}"
+
+# Profiling-ready flags: frame pointers for perf call-graph, debug symbols for annotation.
+# -fno-omit-frame-pointer: <1% overhead; enables frame-pointer based stack unwinding.
+# -g: zero runtime cost (debug sections not loaded at execution time).
+PROFILE_CFLAGS="-fno-omit-frame-pointer -g"
+PROFILE_CXXFLAGS="-fno-omit-frame-pointer -g"
 
 # Minimal Time::Piece stub for OpenSSL 4.x build on minimal Perl installs
 PERL_STUB="${THIRD_PARTY}/_perlstub"
@@ -57,7 +64,7 @@ else
             https://github.com/openssl/openssl.git "${OPENSSL4_DIR}"
     fi
     cd "${OPENSSL4_DIR}"
-    ./Configure --prefix="${OPENSSL4_INSTALL}" shared -O3
+    ./Configure --prefix="${OPENSSL4_INSTALL}" shared -O3 ${PROFILE_CFLAGS}
     make -j"${NPROC}"
     make install_sw
     echo "OpenSSL 4.x installed to ${OPENSSL4_INSTALL}"
@@ -76,7 +83,7 @@ else
             https://github.com/openssl/openssl.git "${OPENSSL3_DIR}"
     fi
     cd "${OPENSSL3_DIR}"
-    ./Configure --prefix="${OPENSSL3_INSTALL}" shared -O3
+    ./Configure --prefix="${OPENSSL3_INSTALL}" shared -O3 ${PROFILE_CFLAGS}
     make -j"${NPROC}"
     make install_sw
     echo "OpenSSL 3.x installed to ${OPENSSL3_INSTALL}"
@@ -99,7 +106,9 @@ else
             https://github.com/smuellerDD/leancrypto.git "${LEANCRYPTO_DIR}"
     fi
     cd "${LEANCRYPTO_DIR}"
-    meson setup builddir --prefix="${LEANCRYPTO_INSTALL}" --default-library=shared -Dbuildtype=release
+    CFLAGS="${PROFILE_CFLAGS}" CXXFLAGS="${PROFILE_CXXFLAGS}" \
+    meson setup builddir --prefix="${LEANCRYPTO_INSTALL}" --default-library=shared \
+        -Dbuildtype=release -Db_ndebug=true
     meson compile -C builddir
     meson install -C builddir
     echo "leancrypto installed to ${LEANCRYPTO_INSTALL}"
@@ -132,6 +141,7 @@ else
 
     cd "${GNUTLS_SRC_DIR}"
     PKG_CONFIG_PATH="${LEANCRYPTO_PKG}:${PKG_CONFIG_PATH:-}" \
+    CFLAGS="-O3 ${PROFILE_CFLAGS}" CXXFLAGS="-O3 ${PROFILE_CXXFLAGS}" \
     ./configure --prefix="${GNUTLS_INSTALL}" \
         --disable-doc --disable-tests --disable-tools \
         --without-p11-kit --enable-shared --disable-static \
@@ -154,7 +164,9 @@ else
             https://boringssl.googlesource.com/boringssl "${BORINGSSL_DIR}"
     fi
     cmake -S "${BORINGSSL_DIR}" -B "${BORINGSSL_DIR}/build" \
-        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
+        -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
         -DBUILD_SHARED_LIBS=ON \
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     cmake --build "${BORINGSSL_DIR}/build" -j "${NPROC}" --target crypto
@@ -178,7 +190,9 @@ else
             https://github.com/aws/aws-lc.git "${AWSLC_DIR}"
     fi
     cmake -S "${AWSLC_DIR}" -B "${AWSLC_DIR}/build" \
-        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
+        -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
         -DBUILD_SHARED_LIBS=ON \
         -DBUILD_TESTING=OFF \
         -DCMAKE_INSTALL_PREFIX="${AWSLC_INSTALL}" \
@@ -188,6 +202,37 @@ else
     echo "AWS-LC installed to ${AWSLC_INSTALL}"
 fi
 
+# --- Intel IPP Crypto (Cryptography Primitives Library) ---
+IPPCRYPTO_DIR="${THIRD_PARTY}/ipp-crypto"
+IPPCRYPTO_INSTALL="${INSTALL_DIR}/ipp-crypto"
+
+if [ -f "${IPPCRYPTO_INSTALL}/lib/intel64/libippcp.so" ] || [ -f "${IPPCRYPTO_INSTALL}/lib/libippcp.so" ]; then
+    echo "Intel IPP Crypto already built, skipping."
+else
+    echo "=== Building Intel IPP Crypto (${IPPCRYPTO_VERSION}) ==="
+    if ! command -v nasm &>/dev/null; then
+        echo "ERROR: nasm is required to build Intel IPP Crypto."
+        echo "Install with: sudo dnf install nasm"
+        exit 1
+    fi
+    if [ ! -d "${IPPCRYPTO_DIR}" ]; then
+        git clone --recursive --branch "${IPPCRYPTO_VERSION}" --depth 1 \
+            https://github.com/intel/cryptography-primitives.git "${IPPCRYPTO_DIR}"
+    fi
+    cmake -S "${IPPCRYPTO_DIR}" -B "${IPPCRYPTO_DIR}/_build" \
+        -DARCH=intel64 \
+        -DCMAKE_INSTALL_PREFIX="${IPPCRYPTO_INSTALL}" \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
+        -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
+        -DOPENSSL_ROOT_DIR="${OPENSSL4_INSTALL}"
+    cmake --build "${IPPCRYPTO_DIR}/_build" --target ippcp -j "${NPROC}"
+    mkdir -p "${IPPCRYPTO_INSTALL}/lib/intel64" "${IPPCRYPTO_INSTALL}/include"
+    cp "${IPPCRYPTO_DIR}/_build/sources/ippcp"/libippcp.so* "${IPPCRYPTO_INSTALL}/lib/intel64/"
+    cp "${IPPCRYPTO_DIR}/include"/*.h "${IPPCRYPTO_INSTALL}/include/"
+    echo "Intel IPP Crypto installed to ${IPPCRYPTO_INSTALL}"
+fi
+
 echo ""
 echo "All dependencies built successfully."
 echo "  OpenSSL 4.x: ${OPENSSL4_INSTALL}"
@@ -195,3 +240,4 @@ echo "  OpenSSL 3.x: ${OPENSSL3_INSTALL}"
 echo "  GnuTLS:      ${GNUTLS_INSTALL}"
 echo "  BoringSSL:   ${BORINGSSL_INSTALL}"
 echo "  AWS-LC:      ${AWSLC_INSTALL}"
+echo "  IPP Crypto:  ${IPPCRYPTO_INSTALL}"
