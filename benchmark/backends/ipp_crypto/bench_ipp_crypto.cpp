@@ -229,13 +229,6 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    if (cfg.threads > 1 && bench::is_kem_algorithm(cfg.algorithm)
-        && cfg.operation == bench::Operation::DECAPS) {
-        fprintf(stderr, "SKIP: ML-KEM decaps with threads>1 triggers a stack-smashing bug "
-                        "in IPP Crypto %s (single-thread works correctly)\n", IPPCRYPTO_VER_STRING);
-        return 2;
-    }
-
     bench::print_banner(info, cfg);
 
     g_states.resize(cfg.threads);

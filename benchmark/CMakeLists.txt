@@ -147,7 +147,7 @@ endif()
 
 # --- Intel IPP Crypto backend (third_party) ---
 set(IPPCRYPTO_ROOT "${CMAKE_SOURCE_DIR}/third_party/install/ipp-crypto" CACHE PATH "Intel IPP Crypto install prefix")
-set(IPPCRYPTO_VERSION "2.2.0" CACHE STRING "Intel IPP Crypto version")
+set(IPPCRYPTO_VERSION "2.3.0" CACHE STRING "Intel IPP Crypto version")
 
 if(EXISTS "${IPPCRYPTO_ROOT}/lib/intel64/libippcp.so")
     set(IPPCRYPTO_LIB_DIR "${IPPCRYPTO_ROOT}/lib/intel64")

@@ -13,7 +13,7 @@ BORINGSSL_VERSION="0.20260803.0"
 AWSLC_VERSION="v5.5.0"
 LEANCRYPTO_VERSION="v1.8.0"
 GNUTLS_VERSION="3.8.13"
-IPPCRYPTO_VERSION="cryptography-primitives_2_2_0"
+IPPCRYPTO_VERSION="v2.3.0"
 
 mkdir -p "${THIRD_PARTY}" "${INSTALL_DIR}"
 
@@ -206,19 +206,27 @@ fi
 IPPCRYPTO_DIR="${THIRD_PARTY}/ipp-crypto"
 IPPCRYPTO_INSTALL="${INSTALL_DIR}/ipp-crypto"
 
+IPPCRYPTO_VERSION_FILE="${IPPCRYPTO_INSTALL}/.version"
+
 if [ -f "${IPPCRYPTO_INSTALL}/lib/intel64/libippcp.so" ] || [ -f "${IPPCRYPTO_INSTALL}/lib/libippcp.so" ]; then
-    echo "Intel IPP Crypto already built, skipping."
-else
+    if [ -f "${IPPCRYPTO_VERSION_FILE}" ] && [ "$(cat "${IPPCRYPTO_VERSION_FILE}")" = "${IPPCRYPTO_VERSION}" ]; then
+        echo "Intel IPP Crypto ${IPPCRYPTO_VERSION} already built, skipping."
+    else
+        echo "Intel IPP Crypto version mismatch or unknown — rebuilding (${IPPCRYPTO_VERSION})..."
+        rm -rf "${IPPCRYPTO_DIR}" "${IPPCRYPTO_INSTALL}"
+    fi
+fi
+
+if [ ! -f "${IPPCRYPTO_INSTALL}/lib/intel64/libippcp.so" ] && [ ! -f "${IPPCRYPTO_INSTALL}/lib/libippcp.so" ]; then
     echo "=== Building Intel IPP Crypto (${IPPCRYPTO_VERSION}) ==="
     if ! command -v nasm &>/dev/null; then
         echo "ERROR: nasm is required to build Intel IPP Crypto."
         echo "Install with: sudo dnf install nasm"
         exit 1
     fi
-    if [ ! -d "${IPPCRYPTO_DIR}" ]; then
-        git clone --recursive --branch "${IPPCRYPTO_VERSION}" --depth 1 \
-            https://github.com/intel/cryptography-primitives.git "${IPPCRYPTO_DIR}"
-    fi
+    rm -rf "${IPPCRYPTO_DIR}"
+    git clone --recursive --branch "${IPPCRYPTO_VERSION}" --depth 1 \
+        https://github.com/intel/cryptography-primitives.git "${IPPCRYPTO_DIR}"
     cmake -S "${IPPCRYPTO_DIR}" -B "${IPPCRYPTO_DIR}/_build" \
         -DARCH=intel64 \
         -DCMAKE_INSTALL_PREFIX="${IPPCRYPTO_INSTALL}" \
@@ -226,10 +234,11 @@ else
         -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
         -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
         -DOPENSSL_ROOT_DIR="${OPENSSL4_INSTALL}"
-    cmake --build "${IPPCRYPTO_DIR}/_build" --target ippcp -j "${NPROC}"
+    cmake --build "${IPPCRYPTO_DIR}/_build" --target ippcp_dyn -j "${NPROC}"
     mkdir -p "${IPPCRYPTO_INSTALL}/lib/intel64" "${IPPCRYPTO_INSTALL}/include"
     cp "${IPPCRYPTO_DIR}/_build/sources/ippcp"/libippcp.so* "${IPPCRYPTO_INSTALL}/lib/intel64/"
     cp "${IPPCRYPTO_DIR}/include"/*.h "${IPPCRYPTO_INSTALL}/include/"
+    echo "${IPPCRYPTO_VERSION}" > "${IPPCRYPTO_VERSION_FILE}"
     echo "Intel IPP Crypto installed to ${IPPCRYPTO_INSTALL}"
 fi
 

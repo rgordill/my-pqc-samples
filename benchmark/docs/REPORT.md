@@ -237,6 +237,143 @@ Key observations:
 
 
 
+## Intel IPP Crypto vs OpenSSL 4.0.1 (ML-KEM-768)
+
+This section compares Intel Cryptography Primitives Library 2.3.0 against OpenSSL 4.0.1 for ML-KEM-768 on an AVX-512-capable server.
+
+
+### Environment
+
+
+| Property       | Value                                              |
+| -------------- | -------------------------------------------------- |
+| Host           | demo-0.sandbox5415.opentlc.com                     |
+| CPU            | Intel Xeon Platinum 8488C (Sapphire Rapids)        |
+| PMU            | sapphire_rapids                                    |
+| ISA extensions | AVX-512F/DQ/BW/VL, AVX-512 IFMA, VBMI, VAES, GFNI |
+| Threads        | 1 (single-thread benchmark)                        |
+| OpenSSL        | 4.0.1 (built from source)                          |
+| IPP Crypto     | 2.3.0 (`v2.3.0`)                                   |
+| Date           | 2026-08-31                                         |
+
+
+IPP Crypto dispatches to its `k1` code path (AVX-512 IFMA) on this CPU. Profiling confirms hot functions use the `k1_cp_*` prefix (`k1_cp_NTT`, `k1_cp_samplePolyCBD`, `k1_cp_byteEncode`, etc.).
+
+> **Note:** Performance data below was collected with IPP Crypto 2.2.0. Version 2.3.0 fixes a multi-threaded ML-KEM `decaps` crash (stack-smashing when `threads > 1`); the benchmark now requires 2.3.0+ and runs all thread counts for decaps.
+
+
+
+### Benchmark Results (ops/sec)
+
+
+| Operation | OpenSSL 4.0.1 | IPP Crypto 2.3.0 | IPP vs OpenSSL |
+| --------- | -------------:| ----------------:| --------------:|
+| keygen    |        28,751 |           22,775 |     1.26× slower |
+| encaps    |        50,222 |           21,499 |     2.33× slower |
+| decaps    |        32,227 |           15,433 |     2.09× slower |
+
+
+IPP Crypto is competitive on keygen (~79% of OpenSSL throughput) but still roughly 2× slower on encaps and decaps.
+
+
+
+### perf stat Comparison (3-second runs, 1 thread)
+
+
+| Metric (keygen)   | OpenSSL | IPP Crypto |
+| ----------------- | -------:| ----------:|
+| Instructions      |  39.1 B |      41.5 B |
+| Cycles            |  12.9 B |      12.9 B |
+| Ops completed     |  70,912 |      45,056 |
+| Cycles/op         |  ~182k  |      ~287k  |
+| Branch misses     |  53.2 M |      42.8 M |
+
+
+| Metric (encaps)   | OpenSSL | IPP Crypto |
+| ----------------- | -------:| ----------:|
+| Instructions      |  54.7 B |      63.5 B |
+| Cycles            |  12.9 B |      13.0 B |
+| Ops completed     | 150,784 |      64,512 |
+| Cycles/op         |   ~86k  |      ~201k  |
+
+
+Both libraries consume similar total cycles over the same wall time, but OpenSSL completes significantly more operations — indicating lower per-operation overhead rather than a missing SIMD code path.
+
+
+
+### Hot Function Profile (keygen)
+
+
+**IPP Crypto (`k1` / AVX-512 IFMA path):**
+
+
+| Function              | % CPU  |
+| --------------------- | ------:|
+| `k1_cp_samplePolyCBD` |   24.7 |
+| `k1_cp_NTT`           |   19.2 |
+| `cp_SampleNTT_MB4`    |   17.5 |
+| `k1_cp_byteEncode`    |   17.0 |
+| `keccak_rnd_loop`     |   12.7 |
+| `k1_cp_multiplyNTT`   |    4.8 |
+
+
+**OpenSSL 4.0.1:**
+
+
+| Function         | % CPU  |
+| ---------------- | ------:|
+| `__KeccakF1600`  |   39.0 |
+| `scalar_ntt`     |   21.3 |
+| `matrix_expand`  |   15.1 |
+| `ossl_ml_kem_genkey` | 9.8 |
+
+
+
+### Hot Function Profile (encaps)
+
+
+**IPP Crypto:**
+
+
+| Function              | % CPU  |
+| --------------------- | ------:|
+| `k1_cp_samplePolyCBD` |   27.2 |
+| `k1_cp_inverseNTT`    |   11.6 |
+| `k1_cp_byteDecode`    |   10.3 |
+| `k1_cp_NTT`           |    9.0 |
+| `cp_SampleNTT_MB4`    |    8.1 |
+| `k1_cp_byteEncode`    |    7.7 |
+| `keccak_rnd_loop`     |   11.9 |
+| `k1_cp_Compress`      |    3.6 |
+
+
+OpenSSL concentrates work in a few tight routines; IPP Crypto spreads CPU time across CBD sampling, byte encode/decode, compress, and multi-buffer sampling helpers.
+
+
+
+### Analysis
+
+
+1. **AVX-512 IFMA dispatch is working.** IPP Crypto uses the `k1` platform code on this CPU. Keygen instruction count is within ~6% of OpenSSL, and the keygen performance gap is only ~1.3×.
+
+2. **Encaps/decaps remain ~2× slower** because IPP spends significant time in serialization and sampling paths that OpenSSL handles more efficiently:
+   - `k1_cp_byteEncode` / `k1_cp_byteDecode` / `k1_cp_Compress` — not prominent in OpenSSL's hot path
+   - `cp_SampleNTT_MB4` — multi-buffer sampling overhead (~17% on keygen, ~8% on encaps)
+   - `k1_cp_samplePolyCBD` — largest single cost on both keygen and encaps (~25–27%)
+
+3. **Keccak/SHA-3:** OpenSSL's hand-optimized `__KeccakF1600` assembly is extremely cycle-efficient despite appearing as a large fraction of its profile. IPP uses C-based `keccak_rnd_loop` (~13% on keygen).
+
+4. **RDRAND is not a significant factor** on this host. `k1_ippsPRNGenRDRAND` accounts for <0.5% of profile time. OpenSSL's software AES-CTR DRBG is similarly negligible.
+
+5. **Per-operation efficiency is the gap.** With similar total cycles and instruction counts on keygen, OpenSSL completes ~58% more operations. On encaps, IPP uses ~16% more instructions and ~2.3× more cycles per operation due to additional encode/decode/compress work in the hot path.
+
+
+
+### Conclusion
+
+
+On an AVX-512 IFMA server, Intel IPP Crypto uses the optimal `k1` code path and is competitive for ML-KEM-768 keygen (~79% of OpenSSL throughput). It remains slower for encaps and decaps because OpenSSL 4.0.1 has a leaner implementation with tighter Keccak assembly, less byte serialization overhead, and fewer abstraction layers between the API and the hot loops. IPP Crypto's advantage is more likely to appear in workloads that benefit from its multi-buffer primitives or on operations where IFMA-accelerated NTT dominates total cost.
+
 ## Limitations
 
 1. **GnuTLS excluded from benchmarks**: GnuTLS 3.8.13 PQC support is non-functional for benchmarking — ML-DSA sign/verify returns immediately without performing real work, ML-KEM encaps/decaps is not exposed in the public API, and ML-KEM-1024 keygen is a no-op. The backend is still built but excluded from the benchmark sweep. See README for details.

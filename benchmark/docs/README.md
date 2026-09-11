@@ -186,7 +186,7 @@ This design measures pure algorithm throughput without synchronization artifacts
 | AWS-LC         | 5.5.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
 | BoringSSL      | 0.20260803.0 | built-in       | —          | all ops     | —           | —               | all ops         | —               | SHA2-128s, SHAKE-256f | Yes      |
 | GnuTLS         | 3.8.13       | leancrypto 1.8 | —          | keygen only | —           | keygen/sign/ver | keygen/sign/ver | keygen/sign/ver | —                     | Yes      |
-| IPP Crypto     | 2.2.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
+| IPP Crypto     | 2.3.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
 
 
 
@@ -195,7 +195,7 @@ This design measures pure algorithm throughput without synchronization artifacts
 
 - **BoringSSL**: Only supports ML-KEM-768, ML-DSA-65, SLH-DSA-SHA2-128s, and SLH-DSA-SHAKE-256f (limited parameter sets). Returns exit code 2 for unsupported combinations.
 - **AWS-LC**: Full ML-KEM and ML-DSA support. **No SLH-DSA support** in this version.
-- **Intel IPP Crypto**: Full ML-KEM (512/768/1024) and ML-DSA (44/65/87) support with FIPS 203/204 compliant implementations. **No SLH-DSA support**. Uses CPU-specific optimizations (AVX-512, AVX2, SSE4.2) dispatched at runtime. ML-KEM and ML-DSA APIs are experimental (require `IPPCP_PREVIEW_ML_KEM` / `IPPCP_PREVIEW_ML_DSA` macros). Requires RDRAND/RDSEED hardware RNG support (Intel Ivy Bridge+ / AMD Zen+). **Known bug**: ML-KEM `decaps` triggers a stack-smashing crash when called from multiple threads simultaneously (even with independent state/buffers per thread); multi-threaded decaps is skipped automatically.
+- **Intel IPP Crypto**: Full ML-KEM (512/768/1024) and ML-DSA (44/65/87) support with FIPS 203/204 compliant implementations. **No SLH-DSA support**. Uses CPU-specific optimizations (AVX-512, AVX2, SSE4.2) dispatched at runtime. ML-KEM and ML-DSA APIs are experimental (require `IPPCP_PREVIEW_ML_KEM` / `IPPCP_PREVIEW_ML_DSA` macros). Requires RDRAND/RDSEED hardware RNG support (Intel Ivy Bridge+ / AMD Zen+). Version **2.3.0+** is required (fixes a multi-threaded ML-KEM `decaps` stack-smashing bug present in 2.2.0).
 - **ML-KEM-512**: Not supported by BoringSSL.
 
 

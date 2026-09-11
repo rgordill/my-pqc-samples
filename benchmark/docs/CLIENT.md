@@ -259,3 +259,44 @@ Each target:
 3. Sets `BUILD_RPATH` so the runtime linker finds the correct library without `LD_LIBRARY_PATH`
 
 This ensures that even though four libraries export `libcrypto.so`, each binary resolves to exactly the right one.
+
+
+
+## Why GPU-Accelerated PQC Is Not Included
+
+Libraries such as [NVIDIA cuPQC](https://docs.nvidia.com/cuda/cupqc/index.html) offer GPU-accelerated ML-KEM and ML-DSA implementations. cuPQC was evaluated as a potential backend but is not included because its execution model is fundamentally incompatible with this benchmark's design. Adding it would require changing the harness, the metrics, and the output format — not just adding another backend.
+
+### Execution Model Mismatch
+
+| Aspect | This benchmark (CPU) | cuPQC (GPU) |
+| --- | --- | --- |
+| **API surface** | Host-side C/C++ function calls | CUDA `__device__` functions called from inside user-written kernels |
+| **Unit of work** | Single operation per call | Batch of thousands of operations per kernel launch |
+| **Threading** | `std::thread` with per-thread state | CUDA blocks and warps; `BlockDim` configurable per launch |
+| **Memory** | Per-thread heap-allocated buffers | GPU global memory, shared memory, and registers; no host-side state during computation |
+| **Timing** | Wall-clock `clock_gettime` in a tight loop | Must account for kernel launch overhead (~5–10 µs), host-device synchronization, and batch amortization |
+
+The current harness calls a single crypto operation per iteration in a CPU loop, measuring `ns/op` directly. cuPQC operations are designed to run fused inside a CUDA kernel — calling a single ML-KEM encaps on a GPU would be *slower* than CPU due to kernel launch latency. The value of GPU acceleration appears only when batching 10,000+ concurrent operations, which is a different measurement question.
+
+### Why the Metrics Are Not Comparable
+
+- **CPU `ops/sec` at 1 thread** answers: *"How fast is one operation end-to-end?"* — relevant for latency-sensitive paths like TLS handshakes.
+- **GPU `ops/sec` in a batch of 65,536** answers: *"What is the maximum throughput when amortizing launch overhead across many operations?"* — relevant for batch certificate issuance, bulk signature verification, or HSM offload.
+
+Placing both numbers in the same CSV column (`ops_per_sec`) with the same schema would be misleading. A GPU reporting 500,000 ML-KEM-768 encaps/sec in a batch vs a CPU reporting 50,000/sec single-threaded are answering fundamentally different questions about system performance.
+
+### Build System Impact
+
+cuPQC requires the CUDA toolkit (`nvcc`), `enable_language(CUDA)` in CMake, and an NVIDIA GPU at runtime. Adding this as a dependency would break the build on any machine without a GPU — currently the benchmark compiles and runs on any x86_64 Linux host with a C++17 compiler.
+
+### What a GPU Benchmark Would Require
+
+A proper GPU PQC benchmark would need:
+
+1. A separate harness that measures batch throughput with configurable batch sizes
+2. GPU warmup and cooldown phases (JIT compilation, memory pool initialization)
+3. An extended CSV schema with a `batch_size` column
+4. Separate kernel-time vs wall-time metrics (to isolate launch overhead)
+5. Memory transfer accounting (or confirmation that keys/ciphertexts stay on-device)
+
+This is a valid and useful measurement — but it is a separate project with different design goals, not an additional backend for this CPU-focused harness.
