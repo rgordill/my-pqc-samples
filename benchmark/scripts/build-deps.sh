@@ -29,6 +29,14 @@ if [ -d "${PERL_STUB}" ]; then
     export PERL5LIB="${PERL_STUB}${PERL5LIB:+:$PERL5LIB}"
 fi
 
+# --- Pre-flight: check Perl module used by OpenSSL configdata.pm ---
+if ! perl -MFile::Copy -e 1 >/dev/null 2>&1; then
+    echo "ERROR: OpenSSL requires the Perl File::Copy module."
+    echo "Install with: sudo dnf install perl-File-Copy"
+    echo "Then rerun this script in the same build environment."
+    exit 1
+fi
+
 # --- Pre-flight: check GnuTLS build dependencies ---
 MISSING_DEPS=()
 for pkg in nettle hogweed gmp libtasn1; do

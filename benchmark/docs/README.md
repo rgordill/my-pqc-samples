@@ -38,6 +38,7 @@ OpenSSL 4.x runs Perl configure scripts that expect these modules on a minimal i
 | `perl-FindBin`       | OpenSSL `Configure`     |
 | `perl-IPC-Cmd`       | OpenSSL `Configure`     |
 | `perl-File-Compare`  | OpenSSL `Configure`     |
+| `perl-File-Copy`     | OpenSSL `configdata.pm` |
 | `perl-File-Path`     | OpenSSL `Configure`     |
 | `perl-File-Temp`     | OpenSSL `Configure`     |
 | `perl-Time-Piece`    | OpenSSL 4.x `Configure` |
@@ -67,14 +68,14 @@ Install everything on Fedora/RHEL:
 
 ```bash
 sudo dnf install gcc-c++ cmake make git curl golang \
-    perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Path \
+    perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-File-Path \
     perl-File-Temp perl-Time-Piece perl-Text-Template \
     nettle-devel gmp-devel libtasn1-devel libunistring-devel \
     python3-meson-python meson ninja-build nasm \
     perf js-d3-flame-graph
 ```
 
-`scripts/build-deps.sh` checks for GnuTLS build dependencies (`nettle`, `hogweed`, `gmp`, `libtasn1` via `pkg-config`) and meson/ninja before starting.
+`scripts/build-deps.sh` checks for Perl's `File::Copy`, GnuTLS build dependencies (`nettle`, `hogweed`, `gmp`, `libtasn1` via `pkg-config`) and meson/ninja before starting.
 
 ## Quick Start
 
