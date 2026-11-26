@@ -133,7 +133,7 @@ With NIST's standardization of post-quantum cryptographic algorithms (ML-KEM in 
 
 ### AD-6: All libraries built from source at pinned tags
 
-**Decision**: The `build-deps.sh` script builds all five libraries (OpenSSL 4.0.1, OpenSSL 3.6.3, BoringSSL 0.20260803.0, AWS-LC v5.5.0, GnuTLS 3.8.13) from their respective release tags.
+**Decision**: The `build-deps.sh` script builds all six comparison libraries (OpenSSL 4.1.0, OpenSSL 3.6.5, BoringSSL 0.20261105.0, AWS-LC v5.15.0, GnuTLS 3.8.14, Intel IPP Crypto 2.4.0) from release tags or official release archives, plus leancrypto 1.9.1 for GnuTLS PQC support. Installed version stamps trigger rebuilds when pins change.
 
 **Rationale**: 
 
@@ -154,7 +154,7 @@ With NIST's standardization of post-quantum cryptographic algorithms (ML-KEM in 
 
 ### AD-8: Same source file for OpenSSL 3.x and 4.x
 
-**Decision**: `bench_openssl.cpp` is compiled twice — once linked against OpenSSL 4.0.1 and once against OpenSSL 3.6.3 — producing two distinct binaries (`bench_openssl` and `bench_openssl3`).
+**Decision**: `bench_openssl.cpp` is compiled twice — once linked against OpenSSL 4.1.0 and once against OpenSSL 3.6.5 — producing two distinct binaries (`bench_openssl` and `bench_openssl3`).
 
 **Rationale**: OpenSSL 4.x maintains backward compatibility with the 3.x EVP API for PQC operations. Maintaining a single source file ensures any API-level differences are immediately visible as compilation failures rather than subtle behavioral differences.
 
@@ -221,8 +221,8 @@ Example:
 
 ```
 OpenSSL (4.0.1),ML-KEM-768,encaps,4,602112,150528.0,6643.3
-AWS-LC (5.5.0),ML-DSA-65,sign,1,17484,5828.0,171602.5
-BoringSSL (0.20260803.0),SLH-DSA-SHA2-128s,verify,1,12237,4079.0,245159.1
+AWS-LC (5.15.0),ML-DSA-65,sign,1,17484,5828.0,171602.5
+BoringSSL (0.20261105.0),SLH-DSA-SHA2-128s,verify,1,12237,4079.0,245159.1
 ```
 
 

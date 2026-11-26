@@ -5,15 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 THIRD_PARTY="${SCRIPT_DIR}/../third_party"
 INSTALL_DIR="${THIRD_PARTY}/install"
 
-NPROC=$(nproc 2>/dev/null || echo 4)
+NPROC=${NPROC:-$(nproc 2>/dev/null || echo 4)}
 
-OPENSSL4_VERSION="openssl-4.0.1"
-OPENSSL3_VERSION="openssl-3.6.3"
-BORINGSSL_VERSION="0.20260803.0"
-AWSLC_VERSION="v5.5.0"
-LEANCRYPTO_VERSION="v1.8.0"
-GNUTLS_VERSION="3.8.13"
-IPPCRYPTO_VERSION="v2.3.0"
+OPENSSL4_VERSION="openssl-4.1.0"
+OPENSSL3_VERSION="openssl-3.6.5"
+BORINGSSL_VERSION="0.20261105.0"
+AWSLC_VERSION="v5.15.0"
+LEANCRYPTO_VERSION="v1.9.1"
+GNUTLS_VERSION="3.8.14"
+IPPCRYPTO_VERSION="v2.4.0"
 
 mkdir -p "${THIRD_PARTY}" "${INSTALL_DIR}"
 
@@ -51,12 +51,44 @@ if ! command -v meson &>/dev/null || ! command -v ninja &>/dev/null; then
     echo ""
 fi
 
-# --- OpenSSL 4.0.1 ---
+# A library alone is insufficient: old installations must not bypass upgrades.
+installed_version_matches() {
+    local prefix="$1" version="$2"
+    shift 2
+    [ -f "${prefix}/.version" ] && [ "$(cat "${prefix}/.version")" = "${version}" ] || return 1
+    local library
+    for library in "$@"; do
+        [ ! -f "${prefix}/${library}" ] || return 0
+    done
+    return 1
+}
+
+checkout_release() {
+    local source_dir="$1" version="$2" clean_make="${3:-false}"
+    if [ "$(git -C "${source_dir}" describe --tags --exact-match HEAD 2>/dev/null || true)" != "${version}" ]; then
+        if ! git -C "${source_dir}" diff --quiet || ! git -C "${source_dir}" diff --cached --quiet; then
+            echo "ERROR: ${source_dir} has local changes; commit or stash them before upgrading."
+            exit 1
+        fi
+        if ! git -C "${source_dir}" rev-parse --verify "refs/tags/${version}" >/dev/null 2>&1; then
+            git -C "${source_dir}" fetch --depth 1 origin "refs/tags/${version}:refs/tags/${version}"
+        fi
+        if [ "${clean_make}" = true ] && [ -f "${source_dir}/Makefile" ]; then
+            make -C "${source_dir}" clean
+        fi
+        git -C "${source_dir}" checkout --detach "${version}"
+    fi
+}
+
+# --- OpenSSL 4.x ---
 OPENSSL4_DIR="${THIRD_PARTY}/openssl4"
 OPENSSL4_INSTALL="${INSTALL_DIR}/openssl4"
+OPENSSL4_VERSION_FILE="${OPENSSL4_INSTALL}/.version"
 
-if [ -f "${OPENSSL4_INSTALL}/lib64/libcrypto.so" ] || [ -f "${OPENSSL4_INSTALL}/lib/libcrypto.so" ]; then
-    echo "OpenSSL 4.x already built, skipping."
+if { [ -f "${OPENSSL4_INSTALL}/lib64/libcrypto.so" ] || [ -f "${OPENSSL4_INSTALL}/lib/libcrypto.so" ]; } \
+    && [ -f "${OPENSSL4_VERSION_FILE}" ] \
+    && [ "$(cat "${OPENSSL4_VERSION_FILE}")" = "${OPENSSL4_VERSION}" ]; then
+    echo "OpenSSL 4.x (${OPENSSL4_VERSION}) already built, skipping."
 else
     echo "=== Building OpenSSL 4.x (${OPENSSL4_VERSION}) ==="
     if [ ! -d "${OPENSSL4_DIR}" ]; then
@@ -64,38 +96,46 @@ else
             https://github.com/openssl/openssl.git "${OPENSSL4_DIR}"
     fi
     cd "${OPENSSL4_DIR}"
+    checkout_release "${OPENSSL4_DIR}" "${OPENSSL4_VERSION}" true
+    # Record success only after installation; interrupted upgrades must rebuild.
+    rm -f "${OPENSSL4_VERSION_FILE}"
     ./Configure --prefix="${OPENSSL4_INSTALL}" shared -O3 ${PROFILE_CFLAGS}
     make -j"${NPROC}"
     make install_sw
+    echo "${OPENSSL4_VERSION}" > "${OPENSSL4_VERSION_FILE}"
     echo "OpenSSL 4.x installed to ${OPENSSL4_INSTALL}"
 fi
 
-# --- OpenSSL 3.6.3 ---
+# --- OpenSSL 3.x ---
 OPENSSL3_DIR="${THIRD_PARTY}/openssl3"
 OPENSSL3_INSTALL="${INSTALL_DIR}/openssl3"
 
-if [ -f "${OPENSSL3_INSTALL}/lib64/libcrypto.so" ] || [ -f "${OPENSSL3_INSTALL}/lib/libcrypto.so" ]; then
+if installed_version_matches "${OPENSSL3_INSTALL}" "${OPENSSL3_VERSION}" lib64/libcrypto.so lib/libcrypto.so; then
     echo "OpenSSL 3.x already built, skipping."
 else
+    rm -f "${OPENSSL3_INSTALL}/.version"
     echo "=== Building OpenSSL 3.x (${OPENSSL3_VERSION}) ==="
     if [ ! -d "${OPENSSL3_DIR}" ]; then
         git clone --branch "${OPENSSL3_VERSION}" --depth 1 \
             https://github.com/openssl/openssl.git "${OPENSSL3_DIR}"
     fi
+    checkout_release "${OPENSSL3_DIR}" "${OPENSSL3_VERSION}" true
     cd "${OPENSSL3_DIR}"
     ./Configure --prefix="${OPENSSL3_INSTALL}" shared -O3 ${PROFILE_CFLAGS}
     make -j"${NPROC}"
     make install_sw
+    echo "${OPENSSL3_VERSION}" > "${OPENSSL3_INSTALL}/.version"
     echo "OpenSSL 3.x installed to ${OPENSSL3_INSTALL}"
 fi
 
-# --- leancrypto 1.8.0 (PQC backend for GnuTLS) ---
+# --- leancrypto (PQC backend for GnuTLS) ---
 LEANCRYPTO_DIR="${THIRD_PARTY}/leancrypto"
 LEANCRYPTO_INSTALL="${INSTALL_DIR}/leancrypto"
 
-if [ -f "${LEANCRYPTO_INSTALL}/lib64/libleancrypto.so" ] || [ -f "${LEANCRYPTO_INSTALL}/lib/libleancrypto.so" ]; then
+if installed_version_matches "${LEANCRYPTO_INSTALL}" "${LEANCRYPTO_VERSION}" lib64/libleancrypto.so lib/libleancrypto.so; then
     echo "leancrypto already built, skipping."
 else
+    rm -f "${LEANCRYPTO_INSTALL}/.version"
     echo "=== Building leancrypto ${LEANCRYPTO_VERSION} ==="
     if ! command -v meson &>/dev/null; then
         echo "ERROR: meson is required to build leancrypto. Install with: pip install --user meson ninja"
@@ -105,23 +145,32 @@ else
         git clone --branch "${LEANCRYPTO_VERSION}" --depth 1 \
             https://github.com/smuellerDD/leancrypto.git "${LEANCRYPTO_DIR}"
     fi
+    checkout_release "${LEANCRYPTO_DIR}" "${LEANCRYPTO_VERSION}"
     cd "${LEANCRYPTO_DIR}"
+    MESON_SETUP_ARGS=()
+    if [ -f builddir/meson-private/coredata.dat ]; then
+        MESON_SETUP_ARGS+=(--wipe)
+    fi
     CFLAGS="${PROFILE_CFLAGS}" CXXFLAGS="${PROFILE_CXXFLAGS}" \
-    meson setup builddir --prefix="${LEANCRYPTO_INSTALL}" --default-library=shared \
+    meson setup "${MESON_SETUP_ARGS[@]}" builddir --prefix="${LEANCRYPTO_INSTALL}" --default-library=shared \
         -Dbuildtype=release -Db_ndebug=true
     meson compile -C builddir
     meson install -C builddir
+    echo "${LEANCRYPTO_VERSION}" > "${LEANCRYPTO_INSTALL}/.version"
     echo "leancrypto installed to ${LEANCRYPTO_INSTALL}"
 fi
 
-# --- GnuTLS 3.8.13 (with leancrypto for PQC) ---
+# --- GnuTLS 3.8.14 (with leancrypto for PQC) ---
 GNUTLS_TARBALL="gnutls-${GNUTLS_VERSION}.tar.xz"
 GNUTLS_SRC_DIR="${THIRD_PARTY}/gnutls-${GNUTLS_VERSION}"
 GNUTLS_INSTALL="${INSTALL_DIR}/gnutls"
 
-if [ -f "${GNUTLS_INSTALL}/lib/libgnutls.so" ] || [ -f "${GNUTLS_INSTALL}/lib64/libgnutls.so" ]; then
+GNUTLS_BUILD_VERSION="${GNUTLS_VERSION}+leancrypto-${LEANCRYPTO_VERSION}"
+
+if installed_version_matches "${GNUTLS_INSTALL}" "${GNUTLS_BUILD_VERSION}" lib/libgnutls.so lib64/libgnutls.so; then
     echo "GnuTLS already built, skipping."
 else
+    rm -f "${GNUTLS_INSTALL}/.version"
     echo "=== Building GnuTLS ${GNUTLS_VERSION} (with --with-leancrypto) ==="
     if [ ! -d "${GNUTLS_SRC_DIR}" ]; then
         cd "${THIRD_PARTY}"
@@ -148,6 +197,7 @@ else
         --with-leancrypto
     make -j"${NPROC}"
     make install
+    echo "${GNUTLS_BUILD_VERSION}" > "${GNUTLS_INSTALL}/.version"
     echo "GnuTLS installed to ${GNUTLS_INSTALL}"
 fi
 
@@ -155,14 +205,16 @@ fi
 BORINGSSL_DIR="${THIRD_PARTY}/boringssl"
 BORINGSSL_INSTALL="${INSTALL_DIR}/boringssl"
 
-if [ -f "${BORINGSSL_INSTALL}/lib/libcrypto.so" ]; then
+if installed_version_matches "${BORINGSSL_INSTALL}" "${BORINGSSL_VERSION}" lib/libcrypto.so; then
     echo "BoringSSL already built, skipping."
 else
+    rm -f "${BORINGSSL_INSTALL}/.version"
     echo "=== Building BoringSSL ${BORINGSSL_VERSION} ==="
     if [ ! -d "${BORINGSSL_DIR}" ]; then
         git clone --branch "${BORINGSSL_VERSION}" --depth 1 \
             https://boringssl.googlesource.com/boringssl "${BORINGSSL_DIR}"
     fi
+    checkout_release "${BORINGSSL_DIR}" "${BORINGSSL_VERSION}"
     cmake -S "${BORINGSSL_DIR}" -B "${BORINGSSL_DIR}/build" \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
@@ -174,6 +226,7 @@ else
     mkdir -p "${BORINGSSL_INSTALL}/lib" "${BORINGSSL_INSTALL}/include"
     cp "${BORINGSSL_DIR}/build/libcrypto.so" "${BORINGSSL_INSTALL}/lib/"
     cp -r "${BORINGSSL_DIR}/include/openssl" "${BORINGSSL_INSTALL}/include/"
+    echo "${BORINGSSL_VERSION}" > "${BORINGSSL_INSTALL}/.version"
     echo "BoringSSL installed to ${BORINGSSL_INSTALL}"
 fi
 
@@ -181,14 +234,16 @@ fi
 AWSLC_DIR="${THIRD_PARTY}/aws-lc"
 AWSLC_INSTALL="${INSTALL_DIR}/aws-lc"
 
-if [ -f "${AWSLC_INSTALL}/lib/libcrypto.so" ] || [ -f "${AWSLC_INSTALL}/lib64/libcrypto.so" ]; then
+if installed_version_matches "${AWSLC_INSTALL}" "${AWSLC_VERSION}" lib/libcrypto.so lib64/libcrypto.so; then
     echo "AWS-LC already built, skipping."
 else
+    rm -f "${AWSLC_INSTALL}/.version"
     echo "=== Building AWS-LC ${AWSLC_VERSION} ==="
     if [ ! -d "${AWSLC_DIR}" ]; then
         git clone --branch "${AWSLC_VERSION}" --depth 1 \
             https://github.com/aws/aws-lc.git "${AWSLC_DIR}"
     fi
+    checkout_release "${AWSLC_DIR}" "${AWSLC_VERSION}"
     cmake -S "${AWSLC_DIR}" -B "${AWSLC_DIR}/build" \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fno-omit-frame-pointer" \
@@ -199,6 +254,7 @@ else
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     cmake --build "${AWSLC_DIR}/build" -j "${NPROC}"
     cmake --install "${AWSLC_DIR}/build"
+    echo "${AWSLC_VERSION}" > "${AWSLC_INSTALL}/.version"
     echo "AWS-LC installed to ${AWSLC_INSTALL}"
 fi
 
@@ -206,27 +262,22 @@ fi
 IPPCRYPTO_DIR="${THIRD_PARTY}/ipp-crypto"
 IPPCRYPTO_INSTALL="${INSTALL_DIR}/ipp-crypto"
 
-IPPCRYPTO_VERSION_FILE="${IPPCRYPTO_INSTALL}/.version"
-
-if [ -f "${IPPCRYPTO_INSTALL}/lib/intel64/libippcp.so" ] || [ -f "${IPPCRYPTO_INSTALL}/lib/libippcp.so" ]; then
-    if [ -f "${IPPCRYPTO_VERSION_FILE}" ] && [ "$(cat "${IPPCRYPTO_VERSION_FILE}")" = "${IPPCRYPTO_VERSION}" ]; then
-        echo "Intel IPP Crypto ${IPPCRYPTO_VERSION} already built, skipping."
-    else
-        echo "Intel IPP Crypto version mismatch or unknown — rebuilding (${IPPCRYPTO_VERSION})..."
-        rm -rf "${IPPCRYPTO_DIR}" "${IPPCRYPTO_INSTALL}"
-    fi
-fi
-
-if [ ! -f "${IPPCRYPTO_INSTALL}/lib/intel64/libippcp.so" ] && [ ! -f "${IPPCRYPTO_INSTALL}/lib/libippcp.so" ]; then
+if installed_version_matches "${IPPCRYPTO_INSTALL}" "${IPPCRYPTO_VERSION}" lib/intel64/libippcp.so lib/libippcp.so; then
+    echo "Intel IPP Crypto ${IPPCRYPTO_VERSION} already built, skipping."
+else
     echo "=== Building Intel IPP Crypto (${IPPCRYPTO_VERSION}) ==="
     if ! command -v nasm &>/dev/null; then
         echo "ERROR: nasm is required to build Intel IPP Crypto."
         echo "Install with: sudo dnf install nasm"
         exit 1
     fi
-    rm -rf "${IPPCRYPTO_DIR}"
-    git clone --recursive --branch "${IPPCRYPTO_VERSION}" --depth 1 \
-        https://github.com/intel/cryptography-primitives.git "${IPPCRYPTO_DIR}"
+    rm -f "${IPPCRYPTO_INSTALL}/.version"
+    if [ ! -d "${IPPCRYPTO_DIR}" ]; then
+        git clone --recursive --branch "${IPPCRYPTO_VERSION}" --depth 1 \
+            https://github.com/intel/cryptography-primitives.git "${IPPCRYPTO_DIR}"
+    fi
+    checkout_release "${IPPCRYPTO_DIR}" "${IPPCRYPTO_VERSION}"
+    git -C "${IPPCRYPTO_DIR}" submodule update --init --recursive
     cmake -S "${IPPCRYPTO_DIR}" -B "${IPPCRYPTO_DIR}/_build" \
         -DARCH=intel64 \
         -DCMAKE_INSTALL_PREFIX="${IPPCRYPTO_INSTALL}" \
@@ -238,7 +289,7 @@ if [ ! -f "${IPPCRYPTO_INSTALL}/lib/intel64/libippcp.so" ] && [ ! -f "${IPPCRYPT
     mkdir -p "${IPPCRYPTO_INSTALL}/lib/intel64" "${IPPCRYPTO_INSTALL}/include"
     cp "${IPPCRYPTO_DIR}/_build/sources/ippcp"/libippcp.so* "${IPPCRYPTO_INSTALL}/lib/intel64/"
     cp "${IPPCRYPTO_DIR}/include"/*.h "${IPPCRYPTO_INSTALL}/include/"
-    echo "${IPPCRYPTO_VERSION}" > "${IPPCRYPTO_VERSION_FILE}"
+    echo "${IPPCRYPTO_VERSION}" > "${IPPCRYPTO_INSTALL}/.version"
     echo "Intel IPP Crypto installed to ${IPPCRYPTO_INSTALL}"
 fi
 

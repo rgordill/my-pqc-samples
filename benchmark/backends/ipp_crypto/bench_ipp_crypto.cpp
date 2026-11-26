@@ -1,7 +1,5 @@
 #include "../../common/bench_common.h"
 
-#define IPPCP_PREVIEW_ML_KEM
-#define IPPCP_PREVIEW_ML_DSA
 #include <ippcp.h>
 #include <ippcpversion.h>
 

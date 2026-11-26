@@ -63,7 +63,12 @@ endif()
 # --- BoringSSL backend (third_party shared build) ---
 set(BORINGSSL_ROOT "${CMAKE_SOURCE_DIR}/third_party/install/boringssl"
     CACHE PATH "BoringSSL install prefix")
-set(BORINGSSL_VERSION "0.20260803.0" CACHE STRING "BoringSSL version tag")
+# Read the installed build stamp so existing CMake caches cannot mislabel results.
+set(BORINGSSL_VERSION "unknown")
+if(EXISTS "${BORINGSSL_ROOT}/.version")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BORINGSSL_ROOT}/.version")
+    file(STRINGS "${BORINGSSL_ROOT}/.version" BORINGSSL_VERSION LIMIT_COUNT 1)
+endif()
 
 if(EXISTS "${BORINGSSL_ROOT}/lib/libcrypto.so" AND EXISTS "${BORINGSSL_ROOT}/include/openssl/evp.h")
     add_executable(bench_boringssl backends/boringssl/bench_boringssl.cpp)
@@ -147,7 +152,6 @@ endif()
 
 # --- Intel IPP Crypto backend (third_party) ---
 set(IPPCRYPTO_ROOT "${CMAKE_SOURCE_DIR}/third_party/install/ipp-crypto" CACHE PATH "Intel IPP Crypto install prefix")
-set(IPPCRYPTO_VERSION "2.3.0" CACHE STRING "Intel IPP Crypto version")
 
 if(EXISTS "${IPPCRYPTO_ROOT}/lib/intel64/libippcp.so")
     set(IPPCRYPTO_LIB_DIR "${IPPCRYPTO_ROOT}/lib/intel64")
@@ -160,7 +164,6 @@ endif()
 if(IPPCRYPTO_LIB_DIR AND EXISTS "${IPPCRYPTO_ROOT}/include/ippcp.h")
     add_executable(bench_ipp_crypto backends/ipp_crypto/bench_ipp_crypto.cpp)
     target_include_directories(bench_ipp_crypto PRIVATE "${IPPCRYPTO_ROOT}/include")
-    target_compile_definitions(bench_ipp_crypto PRIVATE BENCH_IPPCRYPTO_VERSION="${IPPCRYPTO_VERSION}")
     target_link_libraries(bench_ipp_crypto PRIVATE
         bench_common
         "${IPPCRYPTO_LIB_DIR}/libippcp.so"

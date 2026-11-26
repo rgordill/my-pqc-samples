@@ -92,6 +92,25 @@ bash scripts/run-pqc-bench.sh
 
 Results are saved to `results/<timestamp>/summary.csv`.
 
+Dependency versions were checked against upstream releases on 2026-11-26:
+
+- [OpenSSL 4.1.0](https://github.com/openssl/openssl/releases/tag/openssl-4.1.0) and
+  [OpenSSL 3.6.5](https://github.com/openssl/openssl/releases/tag/openssl-3.6.5)
+  (the latter preserves the existing 3.6 comparison series).
+- [BoringSSL 0.20261105.0](https://boringssl.googlesource.com/boringssl/+/refs/tags/0.20261105.0).
+- [AWS-LC 5.15.0](https://github.com/aws/aws-lc/releases/tag/v5.15.0).
+- [GnuTLS 3.8.14](https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/), using
+  [leancrypto 1.9.1](https://github.com/smuellerDD/leancrypto/releases/tag/v1.9.1) for PQC.
+- [Intel IPP Crypto 2.4.0](https://github.com/intel/cryptography-primitives/releases/tag/v2.4.0).
+
+Re-run steps 1 and 2 to upgrade an existing checkout. The dependency script checks
+installed version stamps, updates source tags, and rebuilds older or unknown
+installations. GnuTLS also rebuilds when the pinned leancrypto version changes.
+Set `NPROC=8` when running the dependency script to limit parallel build jobs.
+Existing performance reports retain the versions originally measured; run a new
+sweep for updated comparisons. Benchmark output records the linked library version;
+BoringSSL uses its installed build stamp because it lacks a release version API.
+
 ### Dynamic Linking Note
 
 All libraries are built as shared libraries (`.so`). Each benchmark binary has RPATH/RUNPATH set to resolve its own `libcrypto.so` / `libgnutls.so` / `libleancrypto.so` correctly. **Do not** set a global `LD_LIBRARY_PATH` containing multiple library paths — several libraries share the same `libcrypto.so` filename and will cross-load incorrectly. The `bench_gnutls` binary uses `DT_RPATH` (via `--disable-new-dtags`) to ensure the transitive leancrypto dependency is resolved correctly.
@@ -181,12 +200,12 @@ This design measures pure algorithm throughput without synchronization artifacts
 
 | Library        | Version      | PQC Backend    | ML-KEM-512 | ML-KEM-768  | ML-KEM-1024 | ML-DSA-44       | ML-DSA-65       | ML-DSA-87       | SLH-DSA               | In Sweep |
 | -------------- | ------------ | -------------- | ---------- | ----------- | ----------- | --------------- | --------------- | --------------- | --------------------- | -------- |
-| OpenSSL 4.x    | 4.0.1        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | all 12 variants       | Yes      |
-| OpenSSL 3.x    | 3.6.3        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | all 12 variants       | Yes      |
-| AWS-LC         | 5.5.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
-| BoringSSL      | 0.20260803.0 | built-in       | —          | all ops     | —           | —               | all ops         | —               | SHA2-128s, SHAKE-256f | Yes      |
-| GnuTLS         | 3.8.13       | leancrypto 1.8 | —          | keygen only | —           | keygen/sign/ver | keygen/sign/ver | keygen/sign/ver | —                     | Yes      |
-| IPP Crypto     | 2.3.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
+| OpenSSL 4.x    | 4.1.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | all 12 variants       | Yes      |
+| OpenSSL 3.x    | 3.6.5        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | all 12 variants       | Yes      |
+| AWS-LC         | 5.15.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
+| BoringSSL      | 0.20261105.0 | built-in       | —          | all ops     | —           | —               | all ops         | —               | SHA2-128s, SHAKE-256f | Yes      |
+| GnuTLS         | 3.8.14       | leancrypto 1.9.1 | —          | keygen only | —           | keygen/sign/ver | keygen/sign/ver | keygen/sign/ver | —                     | Yes      |
+| IPP Crypto     | 2.4.0        | built-in       | all ops    | all ops     | all ops     | all ops         | all ops         | all ops         | —                     | Yes      |
 
 
 
@@ -195,14 +214,14 @@ This design measures pure algorithm throughput without synchronization artifacts
 
 - **BoringSSL**: Only supports ML-KEM-768, ML-DSA-65, SLH-DSA-SHA2-128s, and SLH-DSA-SHAKE-256f (limited parameter sets). Returns exit code 2 for unsupported combinations.
 - **AWS-LC**: Full ML-KEM and ML-DSA support. **No SLH-DSA support** in this version.
-- **Intel IPP Crypto**: Full ML-KEM (512/768/1024) and ML-DSA (44/65/87) support with FIPS 203/204 compliant implementations. **No SLH-DSA support**. Uses CPU-specific optimizations (AVX-512, AVX2, SSE4.2) dispatched at runtime. ML-KEM and ML-DSA APIs are experimental (require `IPPCP_PREVIEW_ML_KEM` / `IPPCP_PREVIEW_ML_DSA` macros). Requires RDRAND/RDSEED hardware RNG support (Intel Ivy Bridge+ / AMD Zen+). Version **2.3.0+** is required (fixes a multi-threaded ML-KEM `decaps` stack-smashing bug present in 2.2.0).
+- **Intel IPP Crypto**: Full ML-KEM (512/768/1024) and ML-DSA (44/65/87) support with FIPS 203/204 compliant implementations. **No SLH-DSA support**. Uses CPU-specific optimizations (AVX-512, AVX2, SSE4.2) dispatched at runtime. ML-KEM and ML-DSA APIs are stable as of 2.4.0; preview macros are no longer required. Requires RDRAND/RDSEED hardware RNG support (Intel Ivy Bridge+ / AMD Zen+). Version **2.3.0+** is required (fixes a multi-threaded ML-KEM `decaps` stack-smashing bug present in 2.2.0).
 - **ML-KEM-512**: Not supported by BoringSSL.
 
 
 
 ### GnuTLS PQC Support (leancrypto)
 
-GnuTLS 3.8.13 requires the `--with-leancrypto` configure flag to enable PQC algorithms. Without it, keygen calls are no-ops (completing in nanoseconds instead of microseconds) and sign/verify return empty results. The `build-deps.sh` script builds leancrypto 1.8.0 from source and configures GnuTLS with PQC enabled.
+GnuTLS 3.8.14 requires the `--with-leancrypto` configure flag to enable PQC algorithms. Without it, keygen calls are no-ops (completing in nanoseconds instead of microseconds) and sign/verify return empty results. The `build-deps.sh` script builds leancrypto 1.9.1 from source and configures GnuTLS with PQC enabled.
 
 **Supported operations** (verified via dry-run):
 
